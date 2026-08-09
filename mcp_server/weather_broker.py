@@ -1,52 +1,18 @@
 """
 Weather API adapter/broker backing the Weather MCP Server.
-
-This module acts as the broker adapter layer for weather market/forecast data.
-It handles geocoding, HTTP requests to Open-Meteo APIs, data parsing, and
-optional Databricks secret resolution.
-
-Swap-in note: this module exposes clean functions (get_current_weather, 
-get_forecast, predict_umbrella_needed, compare_weather) so weather_mcp_server.py 
-only needs to import this module and wrap these calls inside @mcp.tool decorators.
+Handles geocoding and HTTP calls to Open-Meteo REST APIs. No secrets required.
 """
 
-import base64
-import os
 import requests
-from typing import Any, Dict, List, Optional
-from databricks.sdk import WorkspaceClient
-
-# Optional Databricks WorkspaceClient initialization for secrets (if using an API key)
-_w: Optional[WorkspaceClient] = None
-
-_SECRET_SCOPE = os.environ.get("WEATHER_SECRET_SCOPE", "database")
-_API_KEY_SECRET_NAME = os.environ.get("WEATHER_API_KEY_SECRET_NAME", "weather-api-key")
+from typing import Any, Dict, List
 
 GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search"
 WEATHER_URL = "https://api.open-meteo.com/v1/forecast"
 HTTP_TIMEOUT = 10
 
 
-def _get_workspace_client() -> WorkspaceClient:
-    """Lazy initialization of the Databricks WorkspaceClient."""
-    global _w
-    if _w is None:
-        _w = WorkspaceClient()
-    return _w
-
-
-def _secret(key: str) -> str:
-    """Fetch and base64-decode a value from the Databricks secret scope."""
-    w = _get_workspace_client()
-    secret = w.secrets.get_secret(scope=_SECRET_SCOPE, key=key)
-    return base64.b64decode(secret.value).decode("utf-8")
-
-
 def _geocode(location: str) -> Dict[str, Any]:
-    """
-    Resolve a human-readable location string (city, state, zip) to 
-    latitude, longitude, timezone, and normalized name metadata.
-    """
+    """Resolve a city or location string to latitude, longitude, and timezone."""
     response = requests.get(
         GEOCODING_URL,
         params={"name": location, "count": 1, "language": "en", "format": "json"},
@@ -57,7 +23,7 @@ def _geocode(location: str) -> Dict[str, Any]:
     results = data.get("results")
 
     if not results:
-        raise ValueError(f"Location '{location}' could not be resolved.")
+        raise ValueError(f"Location '{location}' could not be found or resolved.")
 
     first = results[0]
     return {
@@ -71,10 +37,7 @@ def _geocode(location: str) -> Dict[str, Any]:
 
 
 def get_current_weather(location: str) -> Dict[str, Any]:
-    """
-    Get current weather metrics for a location string.
-    Converts temperature to both Celsius and Fahrenheit.
-    """
+    """Get current weather metrics for a location string."""
     geo = _geocode(location)
     params = {
         "latitude": geo["latitude"],
@@ -89,9 +52,10 @@ def get_current_weather(location: str) -> Dict[str, Any]:
 
     temp_c = current.get("temperature")
     temp_f = round((temp_c * 9 / 5) + 32, 1) if temp_c is not None else None
-
     formatted_location = f"{geo['name']}, {geo['admin1']}, {geo['country']}".strip(", ")
+
     return {
+        "status": "success",
         "location": formatted_location,
         "latitude": geo["latitude"],
         "longitude": geo["longitude"],
@@ -105,9 +69,7 @@ def get_current_weather(location: str) -> Dict[str, Any]:
 
 
 def get_forecast(location: str, days: int = 3) -> Dict[str, Any]:
-    """
-    Fetch daily weather forecast metrics for up to 7 days for a given location.
-    """
+    """Fetch daily weather forecast metrics for up to 7 days."""
     days = max(1, min(int(days), 7))
     geo = _geocode(location)
     params = {
@@ -147,6 +109,7 @@ def get_forecast(location: str, days: int = 3) -> Dict[str, Any]:
 
     formatted_location = f"{geo['name']}, {geo['admin1']}, {geo['country']}".strip(", ")
     return {
+        "status": "success",
         "location": formatted_location,
         "days_requested": days,
         "forecast": forecast_list,
@@ -154,13 +117,7 @@ def get_forecast(location: str, days: int = 3) -> Dict[str, Any]:
 
 
 def predict_umbrella_needed(location: str, days: int = 1) -> Dict[str, Any]:
-    """
-    Evaluate precipitation likelihood for upcoming days and issue an umbrella recommendation.
-    Threshold logic:
-      - >= 40% precipitation probability -> YES
-      - 20% to 39% precipitation probability -> MAYBE
-      - < 20% precipitation probability -> NO
-    """
+    """Evaluate precipitation likelihood and issue an umbrella recommendation."""
     forecast_data = get_forecast(location, days=days)
     forecasts = forecast_data.get("forecast", [])
     max_precip = max([f.get("precip_probability_pct", 0) for f in forecasts], default=0)
@@ -176,6 +133,7 @@ def predict_umbrella_needed(location: str, days: int = 1) -> Dict[str, Any]:
         recommendation = f"Dry conditions expected (only {max_precip}% rain chance). No umbrella needed."
 
     return {
+        "status": "success",
         "location": forecast_data["location"],
         "umbrella_needed": status,
         "max_precipitation_probability_pct": max_precip,
@@ -185,9 +143,7 @@ def predict_umbrella_needed(location: str, days: int = 1) -> Dict[str, Any]:
 
 
 def compare_weather(location_a: str, location_b: str) -> Dict[str, Any]:
-    """
-    Fetch current conditions for two locations side-by-side and calculate the temperature difference.
-    """
+    """Fetch current conditions for two locations and calculate the temperature delta."""
     data_a = get_current_weather(location_a)
     data_b = get_current_weather(location_b)
 
@@ -198,6 +154,7 @@ def compare_weather(location_a: str, location_b: str) -> Dict[str, Any]:
     warmer = data_a["location"] if temp_a >= temp_b else data_b["location"]
 
     return {
+        "status": "success",
         "location_a": data_a,
         "location_b": data_b,
         "temperature_delta_celsius": diff,

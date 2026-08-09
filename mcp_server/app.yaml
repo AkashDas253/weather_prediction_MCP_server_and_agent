@@ -8,9 +8,5 @@ resources:
       path: ./requirements.txt
 
 env:
-  - name: WEATHER_SECRET_SCOPE
-    value: "database"
-  - name: WEATHER_API_KEY_SECRET_NAME
-    value: "weather-api-key"
   - name: PORT
     value: "8000"
