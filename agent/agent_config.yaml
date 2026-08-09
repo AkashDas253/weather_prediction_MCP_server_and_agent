@@ -1,5 +1,10 @@
+# Default values (overridden automatically by environment variables or Databricks secrets if present)
 model_endpoint: "databricks-meta-llama-3-3-70b-instruct"
 mcp_server_url: "https://weather-mcp-server-12345.databricksapps.com/sse"
+
+# Databricks Secret Scope configuration (optional fallback)
+secret_scope: "database"
+mcp_url_secret_key: "mcp-server-url"
 
 system_prompt: |
   You are an intelligent Weather & Travel Advisor agent powered by a Weather MCP server.
